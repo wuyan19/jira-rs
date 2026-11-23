@@ -51,17 +51,24 @@ $summary = [string][char]0x6D4B + [char]0x8BD5 + ' ' + [char]::ConvertFromUtf32(
 
 # ---- reference: the UTF-8 console a user could set up by hand ---------------
 $original = [Console]::OutputEncoding
+$startCodePage = $original.CodePage
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $utf8CodePage = [Console]::OutputEncoding.CodePage
 $truthToken = (Run @('auth', 'status') | ConvertFrom-Json).token
 $truthError = (Run @('update', 'X-1') -MergeStderr) -join "`n"
-[Console]::OutputEncoding = $original
-$codePage = [Console]::OutputEncoding.CodePage
-$log.Add("PowerShell $($PSVersionTable.PSVersion); console code page $codePage (UTF-8 reference run: $utf8CodePage)")
+
+# ---- the console under test --------------------------------------------------
+# A stock PowerShell decodes with the console output code page (936 on zh-CN).
+# Where the console is already UTF-8 (CI runners), switch it to 936 so that
+# the conversion under test is really exercised.
+$codePage = if ($startCodePage -eq 65001) { 936 } else { $startCodePage }
+[Console]::OutputEncoding = [Text.Encoding]::GetEncoding($codePage)
+$testEncoding = [Console]::OutputEncoding
+$log.Add("PowerShell $($PSVersionTable.PSVersion); console code page under test $([Console]::OutputEncoding.CodePage), wanted $codePage (script started at $startCodePage)")
 $log.Add("reference: token=$truthToken; error=$truthError")
 
 Check 'reference run really used a UTF-8 console' ($utf8CodePage -eq 65001) "code page $utf8CodePage"
-Check 'the console under test is not UTF-8' ($codePage -ne 65001) "code page $codePage (nothing to convert; run this test on a 936/437 console)"
+Check 'the console under test is the intended non-UTF-8 one' ([Console]::OutputEncoding.CodePage -eq $codePage -and $codePage -ne 65001) "code page $([Console]::OutputEncoding.CodePage), wanted $codePage"
 Check 'reference token is the expected Chinese text' ($truthToken -ceq $token) "got '$truthToken'"
 
 # ---- nothing configured: what a user sees by default -------------------------
@@ -140,9 +147,11 @@ Check 'JIRA_OUTPUT_ENCODING=utf-8 turns the conversion off' ($forced -cne $truth
 
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $utf8Console = (Run @('auth', 'status') | ConvertFrom-Json).token
-[Console]::OutputEncoding = $original
+[Console]::OutputEncoding = $testEncoding
 Check 'a UTF-8 console keeps working' ($utf8Console -ceq $truthToken) "got '$utf8Console'"
-Check 'console code page restored' ([Console]::OutputEncoding.CodePage -eq $codePage) "now $([Console]::OutputEncoding.CodePage)"
+
+[Console]::OutputEncoding = $original
+Check 'console code page restored' ([Console]::OutputEncoding.CodePage -eq $startCodePage) "now $([Console]::OutputEncoding.CodePage), started at $startCodePage"
 
 $log | ForEach-Object { Write-Output $_ }
 Write-Output ("{0} passed, {1} failed, {2} skipped" -f $script:pass, $script:fail, $script:skip)
