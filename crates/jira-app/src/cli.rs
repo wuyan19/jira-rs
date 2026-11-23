@@ -31,6 +31,15 @@ pub enum Command {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// Self-update to the latest GitHub release (no Jira config needed)
+    Upgrade {
+        /// Only report whether a newer release exists
+        #[arg(long, conflicts_with = "force")]
+        check: bool,
+        /// Reinstall even when the current version is not older
+        #[arg(long)]
+        force: bool,
+    },
     /// Print server info
     ServerInfo,
     /// Fetch one issue by key (description rendered to Markdown)
@@ -200,6 +209,7 @@ fn parse_fields(s: &Option<String>) -> Option<Value> {
 pub async fn run(command: Command) {
     match command {
         Command::Mcp => unreachable!("dispatched in main before config resolution"),
+        Command::Upgrade { check, force } => crate::upgrade::run(check, force).await,
         Command::Auth { action } => auth(action).await,
         Command::ServerInfo => {
             let cfg = require_config();

@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # `jira upgrade` compares its compiled-in version with the release tag. A
+  # mismatch would make every install look perpetually outdated (or too new).
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches workspace version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml"
+            exit 1
+          fi
+
+  # Assets are bare binaries plus a sha256sum-format checksum, not archives:
+  # neither the installers nor `jira upgrade` then need an unpacker, and the
+  # logic is identical on every platform.
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # Xcode cross-compiles to Intel from the Apple Silicon runner.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust (latest stable)
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      # The C parts of `ring` need a musl compiler for the static builds.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p jira-app
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          asset="jira-${GITHUB_REF_NAME#v}-${TARGET}${EXT}"
+          mkdir -p dist
+          cp "target/${TARGET}/release/jira${EXT}" "dist/${asset}"
+          (cd dist && sha256sum "${asset}" > "${asset}.sha256")
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          (cd dist && sha256sum --check *.sha256)
+          {
+            cat scripts/release-notes.md
+            echo
+            echo "## Changelog"
+            echo
+            gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body
+          } > notes.md
+          # Idempotent, so a re-run refreshes the assets instead of failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "jira ${TAG#v}" --notes-file notes.md
+          fi
+
+  # Run the real installers on every platform against the release just
+  # published, then self-update in place. The Linux and macOS paths are not
+  # executed anywhere else.
+  smoke:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install via install.sh
+        if: runner.os != 'Windows'
+        env:
+          JIRA_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: |
+          sh -c "$(curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.sh")"
+          "$JIRA_INSTALL_DIR/jira" --version
+
+      - name: Linux binaries are statically linked
+        if: runner.os == 'Linux'
+        run: file "$RUNNER_TEMP/bin/jira" | tee /dev/stderr | grep -q 'statically linked'
+
+      - name: Self-update (install.sh platforms)
+        if: runner.os != 'Windows'
+        env:
+          JIRA_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: |
+          "$JIRA_INSTALL_DIR/jira" upgrade --check | grep -q up_to_date
+          "$JIRA_INSTALL_DIR/jira" upgrade --force
+          "$JIRA_INSTALL_DIR/jira" --version
+
+      # Windows PowerShell 5.1: what a stock Windows ships with.
+      - name: Install via install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:JIRA_INSTALL_DIR = "$env:RUNNER_TEMP\bin"
+          irm "https://raw.githubusercontent.com/${env:GITHUB_REPOSITORY}/${env:GITHUB_REF_NAME}/scripts/install.ps1" | iex
+          & "$env:RUNNER_TEMP\bin\jira.exe" --version
+
+      - name: Windows installer adds its directory to the user PATH
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (-not ($userPath -split ';' | Where-Object { $_ -eq "$env:RUNNER_TEMP\bin" })) {
+            throw "user PATH does not contain $env:RUNNER_TEMP\bin : $userPath"
+          }
+
+      - name: Self-update (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $jira = "$env:RUNNER_TEMP\bin\jira.exe"
+          $report = & $jira upgrade --check
+          if (-not ($report -match 'up_to_date')) { throw "upgrade --check reported: $report" }
+          & $jira upgrade --force
+          if ($LASTEXITCODE -ne 0) { throw "upgrade --force exited $LASTEXITCODE" }
+          & $jira --version

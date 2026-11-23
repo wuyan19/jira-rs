@@ -11,6 +11,7 @@
 mod cli;
 mod mcp;
 mod ops;
+mod upgrade;
 
 use clap::Parser;
 use cli::{Cli, Command};

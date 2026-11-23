@@ -1,0 +1,5 @@
+# Repository content is LF on every platform. `install.sh` is fetched from
+# raw.githubusercontent.com and run as-is, so a CRLF copy of it would break
+# on Linux and macOS regardless of a contributor's core.autocrlf.
+* text=auto eol=lf
+*.sh text eol=lf

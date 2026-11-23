@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/wuyan19/jira-rs"
@@ -18,13 +18,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
 rmcp = { version = "3", features = ["server", "transport-io"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 toml = "0.9"
 regex = "1"
+sha2 = "0.10"
 
 [profile.release]
 lto = true
+codegen-units = 1
 strip = true
