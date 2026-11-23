@@ -195,15 +195,6 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
         Write-Host "Added $InstallDir to the user PATH."
     }
     Write-Host "Open a new terminal if this is a fresh install, then run: jira auth login"
-
-    # jira prints UTF-8. Windows PowerShell decodes captured output of native
-    # programs with the console code page, so on a stock zh-CN system piping
-    # its JSON (e.g. `jira get X | ConvertFrom-Json`) mangles Chinese text.
-    if ($PSVersionTable.PSVersion.Major -lt 7 -and [Console]::OutputEncoding.CodePage -ne 65001) {
-        Write-Host ""
-        Write-Host "Note: to pipe jira's output in this PowerShell, first run in the session:"
-        Write-Host "  [Console]::OutputEncoding = [Text.Encoding]::UTF8"
-    }
 }
 
 # Leave no function definition behind in an interactive session either.

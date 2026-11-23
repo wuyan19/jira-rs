@@ -24,24 +24,34 @@ jobs:
         run: rustup toolchain install stable --profile minimal
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
+      # CLI output must go through src/output.rs, which picks the encoding
+      # PowerShell decodes with; a raw print macro would bypass it.
+      - name: No raw print macros in the CLI modules
+        run: |
+          ! grep -nE '\b(e?print|e?println)!\(' crates/jira-app/src/cli.rs crates/jira-app/src/upgrade.rs
+      # Chinese text must survive `& jira ... | ConvertFrom-Json` in a stock
+      # Windows PowerShell with nothing configured (see src/output.rs).
+      - name: Output encoding in Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-output-encoding.ps1 -Jira ./target/debug/jira.exe -Work "$env:RUNNER_TEMP/encoding"
       # PowerShell's parser accepts anything between brackets, so a misspelled
       # .NET type only fails at run time, in whatever branch uses it.
-      - name: install.ps1 static checks (Windows PowerShell 5.1)
+      - name: PowerShell scripts static checks (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $path = Join-Path $PWD 'scripts\install.ps1'
-          $text = Get-Content -Raw $path
-          $tokens = $null; $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
-          if ($errors.Count) { throw "parse errors: $($errors | ForEach-Object { $_.Message })" }
-          if ($text -match '[^\x00-\x7F]') { throw 'install.ps1 must stay ASCII: PowerShell 5.1 reads BOM-less files as the ANSI code page' }
-          $names = [regex]::Matches($text, '\[((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\]') |
-              ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique |
-              Where-Object { $_ -notlike 'JiraInstall.*' }   # created at run time by Add-Type
-          $missing = @()
-          foreach ($name in $names) {
-              try { [void][type]$name } catch { $missing += $name }
+          foreach ($path in (Get-ChildItem scripts/*.ps1)) {
+              $text = Get-Content -Raw $path
+              $tokens = $null; $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($path.FullName, [ref]$tokens, [ref]$errors)
+              if ($errors.Count) { throw "$($path.Name): parse errors: $($errors | ForEach-Object { $_.Message })" }
+              if ($text -match '[^\x00-\x7F]') { throw "$($path.Name) must stay ASCII: PowerShell 5.1 reads BOM-less files as the ANSI code page" }
+              $names = [regex]::Matches($text, '\[((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\]') |
+                  ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique |
+                  Where-Object { $_ -notlike 'JiraInstall.*' }   # created at run time by Add-Type
+              foreach ($name in $names) {
+                  try { [void][type]$name } catch { throw "$($path.Name): type name does not resolve: $name" }
+              }
+              "$($path.Name): $($names.Count) type names resolve"
           }
-          "type names referenced: $($names -join ', ')"
-          if ($missing) { throw "type names that do not resolve: $($missing -join ', ')" }

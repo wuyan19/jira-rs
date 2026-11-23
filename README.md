@@ -112,7 +112,7 @@ CLI 同步暴露：`get / search / comments / transitions / project / issue-type
 - 写操作（create/update/move/comment）支持 `--dry-run` / `dry_run=true`：返回将发送的确切请求体而不发送
 - MCP 错误带 `data.category`（config|auth|not_found|api|http|parse|io），Agent 据此决定重试/改配置/问人
 - `jira upgrade [--check]` 输出 JSON，`status` 取值 `up_to_date` / `update_available` / `newer_than_release`
-- 输出为 UTF-8。在 Windows PowerShell 5.1 里直接显示正常，但它捕获外部程序输出时按控制台代码页（GBK）解码，中文会损坏。用管道或变量接收输出前，先在会话中执行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8`；PowerShell 7 与 Git Bash 默认 UTF-8，MCP 不经此路径
+- 输出编码无需配置：PowerShell 读取外部程序输出时按控制台代码页解码，所以 `jira` 由 PowerShell 启动时自动按该代码页输出，代码页表示不了的字符在 JSON 中转义，内容不丢失；Git Bash、cmd、文件重定向与 MCP 均为 UTF-8。只有经 PowerShell 再经其他程序间接启动（如 `cmd /c jira …`）时不做转换。需要时可用 `JIRA_OUTPUT_ENCODING=utf-8` 关闭转换
 
 ## 配置解析（MCP 与 CLI 共用）
 

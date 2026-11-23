@@ -10,6 +10,8 @@ use dialoguer::{Input, Password, Select};
 use jira_core::{Auth, Error, JiraClient, JiraConfig, ServerInfo, StoredConfig, UserInfo};
 use serde_json::{json, Value};
 
+use crate::output;
+
 #[derive(Parser)]
 #[command(
     name = "jira",
@@ -166,9 +168,9 @@ fn exit_code(e: &Error) -> i32 {
 
 fn finish(result: Result<Value, Error>) {
     match result {
-        Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+        Ok(v) => output::json(&v),
         Err(e) => {
-            eprintln!("error: {e}");
+            output::error(&format!("error: {e}"));
             std::process::exit(exit_code(&e));
         }
     }
@@ -178,7 +180,7 @@ fn require_config() -> JiraConfig {
     match JiraConfig::load() {
         Ok(c) => c,
         Err(m) => {
-            eprintln!("config error: {m}");
+            output::error(&format!("config error: {m}"));
             std::process::exit(1);
         }
     }
@@ -188,7 +190,7 @@ fn require_client(cfg: &JiraConfig) -> JiraClient {
     match JiraClient::new(cfg) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("client error: {e}");
+            output::error(&format!("client error: {e}"));
             std::process::exit(1);
         }
     }
@@ -198,7 +200,7 @@ fn require_client(cfg: &JiraConfig) -> JiraClient {
 fn parse_fields(s: &Option<String>) -> Option<Value> {
     s.as_deref().map(|raw| {
         serde_json::from_str::<Value>(raw).unwrap_or_else(|e| {
-            eprintln!("--fields JSON 解析失败: {e}");
+            output::error(&format!("--fields JSON 解析失败: {e}"));
             std::process::exit(1);
         })
     })
@@ -302,7 +304,7 @@ async fn auth(action: AuthAction) {
 }
 
 fn interactive_unavailable() -> ! {
-    eprintln!("交互输入不可用（非终端），请改用 --url/--user/--auth-type/--token-stdin 参数");
+    output::error(&format!("交互输入不可用（非终端），请改用 --url/--user/--auth-type/--token-stdin 参数"));
     std::process::exit(1);
 }
 
@@ -322,7 +324,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let url = match url {
         Some(u) => u,
         None if token_stdin => {
-            eprintln!("--token-stdin 模式需要 --url");
+            output::error(&format!("--token-stdin 模式需要 --url"));
             std::process::exit(1);
         }
         None => Input::new()
@@ -353,7 +355,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
         match user {
             Some(u) => Some(u),
             None if token_stdin => {
-                eprintln!("--token-stdin 模式下 basic 认证需要 --user");
+                output::error(&format!("--token-stdin 模式下 basic 认证需要 --user"));
                 std::process::exit(1);
             }
             None => {
@@ -373,7 +375,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
         let _ = std::io::stdin().read_to_string(&mut buf);
         let t = buf.trim().to_string();
         if t.is_empty() {
-            eprintln!("stdin 未提供 token");
+            output::error(&format!("stdin 未提供 token"));
             std::process::exit(1);
         }
         t
@@ -389,7 +391,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let cfg = match JiraConfig::from_stored(&stored) {
         Ok(c) => c,
         Err(m) => {
-            eprintln!("config error: {m}");
+            output::error(&format!("config error: {m}"));
             std::process::exit(1);
         }
     };
@@ -397,7 +399,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let (info, me) = match verify_credentials(&client).await {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("验证失败（未保存）: {e}");
+            output::error(&format!("验证失败（未保存）: {e}"));
             std::process::exit(exit_code(&e));
         }
     };
@@ -405,39 +407,35 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let path = match JiraConfig::save_file(&stored) {
         Ok(p) => p,
         Err(m) => {
-            eprintln!("{m}");
+            output::error(&format!("{m}"));
             std::process::exit(1);
         }
     };
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
+    output::json(&json!({
             "ok": true,
             "server": { "version": info.version, "deploymentType": info.deployment_type },
             "user": { "displayName": me.display_name, "email": me.email_address },
             "savedTo": path.display().to_string(),
             "note": "token 以明文存储于上述文件",
-        }))
-        .unwrap()
-    );
+        }));
 }
 
 fn logout() {
     let path = JiraConfig::config_path().unwrap_or_else(|m| {
-        eprintln!("{m}");
+        output::error(&format!("{m}"));
         std::process::exit(1);
     });
     match JiraConfig::delete_file() {
         Ok(true) => {
-            println!("{}", serde_json::to_string_pretty(&json!({ "ok": true, "deleted": path.display().to_string() })).unwrap())
+            output::json(&json!({ "ok": true, "deleted": path.display().to_string() }))
         }
         Ok(false) => {
-            eprintln!("配置文件不存在: {}", path.display());
+            output::error(&format!("配置文件不存在: {}", path.display()));
             std::process::exit(1);
         }
         Err(m) => {
-            eprintln!("{m}");
+            output::error(&format!("{m}"));
             std::process::exit(1);
         }
     }
@@ -474,10 +472,10 @@ async fn status(verify: bool) {
             Err(e) => {
                 value["authenticated"] = json!(false);
                 value["verified"] = json!({ "ok": false, "error": e.to_string() });
-                println!("{}", serde_json::to_string_pretty(&value).unwrap());
+                output::json(&value);
                 std::process::exit(exit_code(&e));
             }
         }
     }
-    println!("{}", serde_json::to_string_pretty(&value).unwrap());
+    output::json(&value);
 }

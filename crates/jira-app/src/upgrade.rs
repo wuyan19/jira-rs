@@ -23,6 +23,8 @@ use std::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::output;
+
 const REPO: &str = "wuyan19/jira-rs";
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const GITHUB: &str = "https://github.com";
@@ -48,7 +50,7 @@ const EXE_SUFFIX: &str = if cfg!(windows) { ".exe" } else { "" };
 /// the current version is not older.
 pub async fn run(check: bool, force: bool) {
     if let Err(msg) = run_inner(check, force).await {
-        eprintln!("upgrade error: {msg}");
+        output::error(&format!("upgrade error: {msg}"));
         std::process::exit(1);
     }
 }
@@ -67,7 +69,7 @@ async fn run_inner(check: bool, force: bool) -> Result<(), String> {
     let tag = match latest_tag().await {
         Ok(tag) => tag,
         Err(first) => {
-            eprintln!("查询最新版本失败，1 秒后重试: {first}");
+            output::error(&format!("查询最新版本失败，1 秒后重试: {first}"));
             tokio::time::sleep(Duration::from_secs(1)).await;
             latest_tag().await?
         }
@@ -108,7 +110,7 @@ async fn run_inner(check: bool, force: bool) -> Result<(), String> {
         "to": latest,
         "installedTo": pretty(&installed),
     }));
-    eprintln!("已升级到 {latest}。正在运行的 `jira mcp` 进程仍是旧版本，重启 MCP 客户端后生效。");
+    output::error(&format!("已升级到 {latest}。正在运行的 `jira mcp` 进程仍是旧版本，重启 MCP 客户端后生效。"));
     Ok(())
 }
 
@@ -206,7 +208,7 @@ fn download_base() -> String {
 async fn install(root: &str, asset: &str, work: &Path) -> Result<PathBuf, String> {
     let staged = work.join(asset);
     let url = format!("{root}/{asset}");
-    eprintln!("下载 {url}");
+    output::error(&format!("下载 {url}"));
     let got = download(&url, &staged).await?;
     let want = checksum(&format!("{url}.sha256")).await?;
     if got != want {
@@ -248,7 +250,7 @@ async fn download(url: &str, dest: &Path) -> Result<String, String> {
             Err(DownloadError::Fatal(message)) => return Err(message),
             Err(DownloadError::Retryable(message)) if !retried => {
                 retried = true;
-                eprintln!("\n下载中断，1 秒后重试: {message}");
+                output::error(&format!("\n下载中断，1 秒后重试: {message}"));
                 let _ = tokio::fs::remove_file(dest).await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -276,14 +278,14 @@ async fn download_once(url: &str, dest: &Path) -> Result<String, DownloadError> 
         hasher.update(&chunk);
         done += chunk.len() as u64;
         if progress {
-            eprint!("\r  {done} / {} bytes", total.map_or_else(|| "?".into(), |t| t.to_string()));
+            output::progress(&format!("\r  {done} / {} bytes", total.map_or_else(|| "?".into(), |t| t.to_string())));
         }
     }
     tokio::io::AsyncWriteExt::flush(&mut file)
         .await
         .map_err(|e| DownloadError::Fatal(format!("写入 {} 失败: {e}", dest.display())))?;
     if progress {
-        eprintln!();
+        output::progress("\n");
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -410,7 +412,7 @@ fn pretty(path: &Path) -> String {
 }
 
 fn print_json(value: serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(&value).unwrap());
+    output::json(&value);
 }
 
 #[cfg(test)]
