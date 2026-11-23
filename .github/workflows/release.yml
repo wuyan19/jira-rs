@@ -3,6 +3,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Run the installer smoke tests against a release that already exists,
+  # without rebuilding or republishing it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test the installers against (e.g. v0.1.1)
+        required: true
 
 permissions:
   contents: read
@@ -14,9 +21,10 @@ jobs:
   # `jira upgrade` compares its compiled-in version with the release tag. A
   # mismatch would make every install look perpetually outdated (or too new).
   check:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Tag matches workspace version
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
@@ -29,6 +37,7 @@ jobs:
   # neither the installers nor `jira upgrade` then need an unpacker, and the
   # logic is identical on every platform.
   build:
+    if: github.event_name == 'push'
     needs: check
     strategy:
       fail-fast: false
@@ -48,7 +57,7 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Rust (latest stable)
         run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
       # The C parts of `ring` need a musl compiler for the static builds.
@@ -73,12 +82,13 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           pattern: bin-*
@@ -106,37 +116,73 @@ jobs:
             gh release create "$TAG" dist/* --verify-tag --title "jira ${TAG#v}" --notes-file notes.md
           fi
 
-  # Run the real installers on every platform against the release just
-  # published, then self-update in place. The Linux and macOS paths are not
-  # executed anywhere else.
+  # Run the real installers on every platform against the published release,
+  # then self-update in place. The Linux and macOS paths are not executed
+  # anywhere else.
   smoke:
     needs: release
+    # Also on a manual run, where the jobs above are skipped by design.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      # Installer scripts come from the ref this workflow runs on (the tag
+      # itself on a release push, a branch on a manual run), so a fix to
+      # the installers can be checked against an existing release.
+      SCRIPTS_REF: ${{ github.ref_name }}
+      RAW: https://raw.githubusercontent.com/${{ github.repository }}
+      DOWNLOAD: ${{ github.server_url }}/${{ github.repository }}/releases/download
     steps:
       - name: Install via install.sh
         if: runner.os != 'Windows'
         env:
           JIRA_INSTALL_DIR: ${{ runner.temp }}/bin
         run: |
-          sh -c "$(curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/scripts/install.sh")"
+          sh -c "$(curl -fsSL "$RAW/$SCRIPTS_REF/scripts/install.sh")"
           "$JIRA_INSTALL_DIR/jira" --version
 
-      - name: Linux binaries are statically linked
+      # `file` words differ per target ("statically linked" on aarch64,
+      # "static-pie linked" on x86_64); what matters is that nothing is
+      # dynamically linked.
+      - name: Linux binaries have no shared-library dependencies
         if: runner.os == 'Linux'
-        run: file "$RUNNER_TEMP/bin/jira" | tee /dev/stderr | grep -q 'statically linked'
+        run: |
+          file "$RUNNER_TEMP/bin/jira"
+          if readelf -d "$RUNNER_TEMP/bin/jira" | grep -q NEEDED; then
+            echo "::error::the binary depends on shared libraries"
+            exit 1
+          fi
 
       - name: Self-update (install.sh platforms)
         if: runner.os != 'Windows'
         env:
           JIRA_INSTALL_DIR: ${{ runner.temp }}/bin
         run: |
-          "$JIRA_INSTALL_DIR/jira" upgrade --check | grep -q up_to_date
           "$JIRA_INSTALL_DIR/jira" upgrade --force
           "$JIRA_INSTALL_DIR/jira" --version
+
+      # Only right after a release is the tested tag known to be the latest.
+      - name: upgrade --check reports up to date
+        if: github.event_name == 'push' && runner.os != 'Windows'
+        env:
+          JIRA_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: |
+          "$JIRA_INSTALL_DIR/jira" upgrade --check | grep -q up_to_date
+
+      # The Intel build is cross-compiled and otherwise never executed.
+      # Not blocking: depends on Rosetta being present on the runner.
+      - name: Intel build runs on Apple Silicon (Rosetta)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          intel="$RUNNER_TEMP/jira-intel"
+          curl -fsSL -o "$intel" "$DOWNLOAD/$TAG/jira-${TAG#v}-x86_64-apple-darwin"
+          chmod +x "$intel"
+          arch -x86_64 "$intel" --version
 
       # Windows PowerShell 5.1: what a stock Windows ships with.
       - name: Install via install.ps1
@@ -144,7 +190,7 @@ jobs:
         shell: powershell
         run: |
           $env:JIRA_INSTALL_DIR = "$env:RUNNER_TEMP\bin"
-          irm "https://raw.githubusercontent.com/${env:GITHUB_REPOSITORY}/${env:GITHUB_REF_NAME}/scripts/install.ps1" | iex
+          irm "$env:RAW/$env:SCRIPTS_REF/scripts/install.ps1" | iex
           & "$env:RUNNER_TEMP\bin\jira.exe" --version
 
       - name: Windows installer adds its directory to the user PATH
@@ -156,13 +202,18 @@ jobs:
             throw "user PATH does not contain $env:RUNNER_TEMP\bin : $userPath"
           }
 
+      - name: upgrade --check reports up to date (Windows)
+        if: github.event_name == 'push' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $report = & "$env:RUNNER_TEMP\bin\jira.exe" upgrade --check
+          if (-not ($report -match 'up_to_date')) { throw "upgrade --check reported: $report" }
+
       - name: Self-update (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $jira = "$env:RUNNER_TEMP\bin\jira.exe"
-          $report = & $jira upgrade --check
-          if (-not ($report -match 'up_to_date')) { throw "upgrade --check reported: $report" }
           & $jira upgrade --force
           if ($LASTEXITCODE -ne 0) { throw "upgrade --force exited $LASTEXITCODE" }
           & $jira --version

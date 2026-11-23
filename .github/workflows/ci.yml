@@ -19,7 +19,7 @@ jobs:
         # covers the remaining targets by cross-compiling.
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Rust (latest stable)
         run: rustup toolchain install stable --profile minimal
       - run: cargo build --workspace --locked
