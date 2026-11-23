@@ -202,14 +202,23 @@ jobs:
             throw "user PATH does not contain $env:RUNNER_TEMP\bin : $userPath"
           }
 
-      # The binary users actually get, in a stock Windows PowerShell.
+      # The binary users actually get, in both PowerShell generations.
       - name: Output encoding in Windows PowerShell 5.1 (installed binary)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $test = "$env:RUNNER_TEMP\test-output-encoding.ps1"
           Invoke-WebRequest -Uri "$env:RAW/$env:SCRIPTS_REF/scripts/test-output-encoding.ps1" -OutFile $test -UseBasicParsing
-          & powershell -NoProfile -ExecutionPolicy Bypass -File $test -Jira "$env:RUNNER_TEMP\bin\jira.exe" -Work "$env:RUNNER_TEMP\encoding"
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $test -Jira "$env:RUNNER_TEMP\bin\jira.exe" -Work "$env:RUNNER_TEMP\encoding-51"
+          if ($LASTEXITCODE -ne 0) { throw "the output-encoding test exited $LASTEXITCODE" }
+
+      - name: Output encoding in PowerShell 7 (installed binary)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $test = "$env:RUNNER_TEMP\test-output-encoding.ps1"
+          Invoke-WebRequest -Uri "$env:RAW/$env:SCRIPTS_REF/scripts/test-output-encoding.ps1" -OutFile $test -UseBasicParsing
+          & pwsh -NoProfile -File $test -Jira "$env:RUNNER_TEMP\bin\jira.exe" -Work "$env:RUNNER_TEMP\encoding-7"
           if ($LASTEXITCODE -ne 0) { throw "the output-encoding test exited $LASTEXITCODE" }
 
       - name: upgrade --check reports up to date (Windows)

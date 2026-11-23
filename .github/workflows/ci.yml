@@ -27,14 +27,19 @@ jobs:
       # CLI output must go through src/output.rs, which picks the encoding
       # PowerShell decodes with; a raw print macro would bypass it.
       - name: No raw print macros in the CLI modules
+        shell: bash   # the default shell on Windows runners is pwsh
         run: |
           ! grep -nE '\b(e?print|e?println)!\(' crates/jira-app/src/cli.rs crates/jira-app/src/upgrade.rs
-      # Chinese text must survive `& jira ... | ConvertFrom-Json` in a stock
-      # Windows PowerShell with nothing configured (see src/output.rs).
+      # Chinese text must survive `& jira ... | ConvertFrom-Json` with nothing
+      # configured, in both PowerShell generations (see src/output.rs).
       - name: Output encoding in Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell
-        run: ./scripts/test-output-encoding.ps1 -Jira ./target/debug/jira.exe -Work "$env:RUNNER_TEMP/encoding"
+        run: ./scripts/test-output-encoding.ps1 -Jira ./target/debug/jira.exe -Work "$env:RUNNER_TEMP/encoding-51"
+      - name: Output encoding in PowerShell 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-output-encoding.ps1 -Jira ./target/debug/jira.exe -Work "$env:RUNNER_TEMP/encoding-7"
       # PowerShell's parser accepts anything between brackets, so a misspelled
       # .NET type only fails at run time, in whatever branch uses it.
       - name: PowerShell scripts static checks (Windows PowerShell 5.1)
