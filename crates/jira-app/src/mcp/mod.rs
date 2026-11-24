@@ -162,7 +162,7 @@ fn mcp_error(e: &Error) -> McpError {
         Error::Unauthorized(m) => {
             return McpError::new(
                 ErrorCode::INVALID_PARAMS,
-                format!("认证失败: {m}"),
+                format!("authentication failed: {m}"),
                 Some(json!({ "category": "auth" })),
             )
         }

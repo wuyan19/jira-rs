@@ -200,7 +200,7 @@ fn require_client(cfg: &JiraConfig) -> JiraClient {
 fn parse_fields(s: &Option<String>) -> Option<Value> {
     s.as_deref().map(|raw| {
         serde_json::from_str::<Value>(raw).unwrap_or_else(|e| {
-            output::error(&format!("--fields JSON 解析失败: {e}"));
+            output::error(&format!("invalid --fields JSON: {e}"));
             std::process::exit(1);
         })
     })
@@ -304,7 +304,7 @@ async fn auth(action: AuthAction) {
 }
 
 fn interactive_unavailable() -> ! {
-    output::error(&format!("交互输入不可用（非终端），请改用 --url/--user/--auth-type/--token-stdin 参数"));
+    output::error(&format!("interactive input is unavailable (not a terminal); use --url/--user/--auth-type/--token-stdin instead"));
     std::process::exit(1);
 }
 
@@ -324,11 +324,11 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let url = match url {
         Some(u) => u,
         None if token_stdin => {
-            output::error(&format!("--token-stdin 模式需要 --url"));
+            output::error(&format!("--token-stdin requires --url"));
             std::process::exit(1);
         }
         None => Input::new()
-            .with_prompt("Jira 地址")
+            .with_prompt("Jira URL")
             .interact_text()
             .unwrap_or_else(|_| interactive_unavailable()),
     };
@@ -339,8 +339,8 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
         None if token_stdin || cloud => "basic".to_string(),
         None => {
             let idx = Select::new()
-                .with_prompt("认证方式")
-                .items(&["Basic (API token / 密码)", "Bearer (DC PAT)"])
+                .with_prompt("Authentication")
+                .items(&["Basic (API token / password)", "Bearer (Data Center PAT)"])
                 .default(0)
                 .interact()
                 .unwrap_or_else(|_| interactive_unavailable());
@@ -355,11 +355,11 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
         match user {
             Some(u) => Some(u),
             None if token_stdin => {
-                output::error(&format!("--token-stdin 模式下 basic 认证需要 --user"));
+                output::error(&format!("--token-stdin with basic auth requires --user"));
                 std::process::exit(1);
             }
             None => {
-                let prompt = if cloud { "邮箱" } else { "账号" };
+                let prompt = if cloud { "Email" } else { "Username" };
                 Some(
                     Input::new()
                         .with_prompt(prompt)
@@ -375,7 +375,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
         let _ = std::io::stdin().read_to_string(&mut buf);
         let t = buf.trim().to_string();
         if t.is_empty() {
-            output::error(&format!("stdin 未提供 token"));
+            output::error("no token was provided on stdin");
             std::process::exit(1);
         }
         t
@@ -399,7 +399,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
     let (info, me) = match verify_credentials(&client).await {
         Ok(pair) => pair,
         Err(e) => {
-            output::error(&format!("验证失败（未保存）: {e}"));
+            output::error(&format!("verification failed (nothing was saved): {e}"));
             std::process::exit(exit_code(&e));
         }
     };
@@ -417,7 +417,7 @@ async fn login(url: Option<String>, user: Option<String>, auth_type: Option<Stri
             "server": { "version": info.version, "deploymentType": info.deployment_type },
             "user": { "displayName": me.display_name, "email": me.email_address },
             "savedTo": path.display().to_string(),
-            "note": "token 以明文存储于上述文件",
+            "note": "The token is stored in plain text in this file",
         }));
 }
 
@@ -431,7 +431,7 @@ fn logout() {
             output::json(&json!({ "ok": true, "deleted": path.display().to_string() }))
         }
         Ok(false) => {
-            output::error(&format!("配置文件不存在: {}", path.display()));
+            output::error(&format!("config file does not exist: {}", path.display()));
             std::process::exit(1);
         }
         Err(m) => {
@@ -452,7 +452,7 @@ async fn status(verify: bool) {
         "url": cfg.url,
         "authType": auth_type,
         "user": user,
-        "token": "(已设置，已脱敏)",
+        "token": "(set, redacted)",
         "timeoutSecs": cfg.timeout_secs,
         "configFile": JiraConfig::config_path().ok().map(|p| p.display().to_string()),
         // null = 未验证（离线）；--verify 后为 true/false

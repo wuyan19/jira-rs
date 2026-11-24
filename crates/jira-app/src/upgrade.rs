@@ -28,7 +28,7 @@ use crate::output;
 const REPO: &str = "wuyan19/jira-rs";
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const GITHUB: &str = "https://github.com";
-const NETWORK_HINT: &str = "可设置 HTTPS_PROXY 走代理，或把 JIRA_DOWNLOAD_BASE 设为 GitHub 加速站前缀（形如 https://<加速站>/https://github.com）后重试";
+const NETWORK_HINT: &str = "Set HTTPS_PROXY to use a proxy, or JIRA_DOWNLOAD_BASE to a GitHub mirror prefix (e.g. https://<mirror>/https://github.com), and retry";
 
 /// Release target this binary was built for; "" = no self-update support.
 const TARGET: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -58,7 +58,7 @@ pub async fn run(check: bool, force: bool) {
 async fn run_inner(check: bool, force: bool) -> Result<(), String> {
     if TARGET.is_empty() {
         return Err(format!(
-            "当前平台不支持自动升级（{}-{}），请手工下载：{GITHUB}/{REPO}/releases/latest",
+            "self-update is not supported on {}-{}; download manually from {GITHUB}/{REPO}/releases/latest",
             std::env::consts::OS,
             std::env::consts::ARCH
         ));
@@ -69,7 +69,7 @@ async fn run_inner(check: bool, force: bool) -> Result<(), String> {
     let tag = match latest_tag().await {
         Ok(tag) => tag,
         Err(first) => {
-            output::error(&format!("查询最新版本失败，1 秒后重试: {first}"));
+            output::error(&format!("Failed to look up the latest version, retrying in 1 second: {first}"));
             tokio::time::sleep(Duration::from_secs(1)).await;
             latest_tag().await?
         }
@@ -110,7 +110,7 @@ async fn run_inner(check: bool, force: bool) -> Result<(), String> {
         "to": latest,
         "installedTo": pretty(&installed),
     }));
-    output::error(&format!("已升级到 {latest}。正在运行的 `jira mcp` 进程仍是旧版本，重启 MCP 客户端后生效。"));
+    output::error(&format!("Upgraded to {latest}."));
     Ok(())
 }
 
@@ -124,7 +124,7 @@ async fn latest_tag() -> Result<String, String> {
     let probe = client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
     let first = match probe.get(format!("{GITHUB}/{REPO}/releases/latest")).send().await {
         Ok(resp) => {
             let tag = resp
@@ -136,14 +136,14 @@ async fn latest_tag() -> Result<String, String> {
                 .map(str::to_string);
             match tag {
                 Some(tag) => return Ok(tag),
-                None => "响应中没有指向 release tag 的 Location".to_string(),
+                None => "the response has no Location pointing at a release tag".to_string(),
             }
         }
         Err(e) => e.to_string(),
     };
 
     // 2. REST API (rate-limited per IP, hence second).
-    let client = client_builder().build().map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let client = client_builder().build().map_err(|e| format!("failed to create HTTP client: {e}"))?;
     let second = match client
         .get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
@@ -154,16 +154,16 @@ async fn latest_tag() -> Result<String, String> {
             Ok(resp) => match resp.json::<serde_json::Value>().await {
                 Ok(v) => match v["tag_name"].as_str().filter(|t| t.starts_with('v')) {
                     Some(tag) => return Ok(tag.to_string()),
-                    None => "返回的最新 release 没有以 v 开头的 tag".to_string(),
+                    None => "the latest release has no tag starting with 'v'".to_string(),
                 },
-                Err(e) => format!("解析响应失败: {e}"),
+                Err(e) => format!("failed to parse the response: {e}"),
             },
             Err(e) => e.to_string(),
         },
         Err(e) => e.to_string(),
     };
 
-    Err(format!("无法查询最新版本（github.com: {first}；api.github.com: {second}）。{NETWORK_HINT}"))
+    Err(format!("cannot determine the latest version (github.com: {first}; api.github.com: {second}). {NETWORK_HINT}"))
 }
 
 fn split_version(v: &str) -> (&str, Option<&str>) {
@@ -208,16 +208,16 @@ fn download_base() -> String {
 async fn install(root: &str, asset: &str, work: &Path) -> Result<PathBuf, String> {
     let staged = work.join(asset);
     let url = format!("{root}/{asset}");
-    output::error(&format!("下载 {url}"));
+    output::error(&format!("Downloading {url}"));
     let got = download(&url, &staged).await?;
     let want = checksum(&format!("{url}.sha256")).await?;
     if got != want {
         return Err(format!(
-            "SHA-256 校验失败（下载内容 {got}，期望 {want}），未做任何替换。文件可能被截断或篡改，请更换 JIRA_DOWNLOAD_BASE 或改走代理后重试"
+            "SHA-256 mismatch (downloaded {got}, expected {want}); nothing was replaced. The file may be truncated or tampered with; try another JIRA_DOWNLOAD_BASE or a proxy"
         ));
     }
 
-    let exe = std::env::current_exe().map_err(|e| format!("无法定位当前程序路径: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate the running executable: {e}"))?;
     // Resolve symlinks so a linked install updates the real file.
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
     replace(&staged, &exe)
@@ -250,7 +250,7 @@ async fn download(url: &str, dest: &Path) -> Result<String, String> {
             Err(DownloadError::Fatal(message)) => return Err(message),
             Err(DownloadError::Retryable(message)) if !retried => {
                 retried = true;
-                output::error(&format!("\n下载中断，1 秒后重试: {message}"));
+                output::error(&format!("\nDownload interrupted, retrying in 1 second: {message}"));
                 let _ = tokio::fs::remove_file(dest).await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -264,17 +264,17 @@ async fn download_once(url: &str, dest: &Path) -> Result<String, DownloadError> 
     let total = resp.content_length();
     let mut file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| DownloadError::Fatal(format!("创建 {} 失败: {e}", dest.display())))?;
+        .map_err(|e| DownloadError::Fatal(format!("failed to create {}: {e}", dest.display())))?;
     let (mut hasher, mut done) = (Sha256::new(), 0u64);
     let progress = std::io::stderr().is_terminal();
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| DownloadError::Retryable(format!("下载 {url} 中断: {e}")))?
+        .map_err(|e| DownloadError::Retryable(format!("download of {url} was interrupted: {e}")))?
     {
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
-            .map_err(|e| DownloadError::Fatal(format!("写入 {} 失败: {e}", dest.display())))?;
+            .map_err(|e| DownloadError::Fatal(format!("failed to write {}: {e}", dest.display())))?;
         hasher.update(&chunk);
         done += chunk.len() as u64;
         if progress {
@@ -283,7 +283,7 @@ async fn download_once(url: &str, dest: &Path) -> Result<String, DownloadError> 
     }
     tokio::io::AsyncWriteExt::flush(&mut file)
         .await
-        .map_err(|e| DownloadError::Fatal(format!("写入 {} 失败: {e}", dest.display())))?;
+        .map_err(|e| DownloadError::Fatal(format!("failed to write {}: {e}", dest.display())))?;
     if progress {
         output::progress("\n");
     }
@@ -297,23 +297,23 @@ async fn checksum(url: &str) -> Result<String, String> {
         .map_err(DownloadError::message)?
         .text()
         .await
-        .map_err(|e| format!("读取 {url} 失败: {e}"))?;
+        .map_err(|e| format!("failed to read {url}: {e}"))?;
     text.split_whitespace()
         .next()
         .map(str::to_ascii_lowercase)
         .filter(|h| h.len() == 64)
-        .ok_or_else(|| format!("校验文件 {url} 内容无法识别"))
+        .ok_or_else(|| format!("cannot read the checksum file {url}"))
 }
 
 async fn fetch(url: &str) -> Result<reqwest::Response, DownloadError> {
     let client = client_builder()
         .build()
-        .map_err(|e| DownloadError::Fatal(format!("创建 HTTP 客户端失败: {e}")))?;
+        .map_err(|e| DownloadError::Fatal(format!("failed to create HTTP client: {e}")))?;
     let resp = client.get(url).send().await.map_err(|e| {
-        DownloadError::Retryable(format!("请求 {url} 失败: {e}。{NETWORK_HINT}"))
+        DownloadError::Retryable(format!("request to {url} failed: {e}. {NETWORK_HINT}"))
     })?;
     resp.error_for_status()
-        .map_err(|e| DownloadError::Fatal(format!("请求 {url} 失败: {e}")))
+        .map_err(|e| DownloadError::Fatal(format!("request to {url} failed: {e}")))
 }
 
 
@@ -338,7 +338,7 @@ fn proxy_from_env() -> Option<reqwest::Proxy> {
 
 fn work_dir() -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join(format!("jira-upgrade-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录 {} 失败: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create temp directory {}: {e}", dir.display()))?;
     Ok(dir)
 }
 
@@ -365,10 +365,10 @@ fn replace(staged: &Path, exe: &Path) -> Result<PathBuf, String> {
         backup = with_suffix(exe, &format!(".old-{}", std::process::id()));
     }
     std::fs::rename(exe, &backup)
-        .map_err(|e| format!("无法替换 {}（目录是否只读？）: {e}", pretty(exe)))?;
+        .map_err(|e| format!("cannot replace {} (is the directory read-only?): {e}", pretty(exe)))?;
     if let Err(e) = std::fs::copy(staged, exe) {
         let _ = std::fs::rename(&backup, exe);
-        return Err(format!("写入新版本失败，已恢复原版本: {e}"));
+        return Err(format!("failed to write the new version; the previous one was restored: {e}"));
     }
     // Fails harmlessly while an older process still maps the backup.
     let _ = std::fs::remove_file(&backup);
@@ -382,12 +382,12 @@ fn replace(staged: &Path, exe: &Path) -> Result<PathBuf, String> {
     // Stage in the same directory so the final rename is atomic and the
     // running image keeps executing from the old inode.
     std::fs::set_permissions(staged, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置权限失败: {e}"))?;
+        .map_err(|e| format!("failed to set permissions: {e}"))?;
     let tmp = with_suffix(exe, &format!(".new-{}", std::process::id()));
     let result = std::fs::copy(staged, &tmp).and_then(|_| std::fs::rename(&tmp, exe));
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("无法替换 {}（目录是否需要管理员权限？）: {e}", pretty(exe)));
+        return Err(format!("cannot replace {} (does the directory need administrator rights?): {e}", pretty(exe)));
     }
     Ok(exe.to_path_buf())
 }

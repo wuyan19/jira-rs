@@ -98,7 +98,7 @@ impl JiraClient {
             .next()
             .and_then(|p| p.issue_types.into_iter().next())
             .ok_or_else(|| {
-                Error::NotFound(format!("createmeta 未返回 {project} / issue type {issue_type_id}"))
+                Error::NotFound(format!("createmeta returned nothing for {project} / issue type {issue_type_id}"))
             })
     }
 
@@ -140,7 +140,7 @@ impl JiraClient {
     pub async fn attach_file(&self, key: &str, path: &str) -> Result<Value> {
         let data = tokio::fs::read(path)
             .await
-            .map_err(|e| Error::Io(format!("读取文件 {path} 失败: {e}")))?;
+            .map_err(|e| Error::Io(format!("failed to read file {path}: {e}")))?;
         let filename = std::path::Path::new(path)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -190,12 +190,12 @@ impl JiraClient {
         let dir = if dest_dir.is_empty() { "." } else { dest_dir };
         tokio::fs::create_dir_all(dir)
             .await
-            .map_err(|e| Error::Io(format!("创建目录 {dir} 失败: {e}")))?;
+            .map_err(|e| Error::Io(format!("failed to create directory {dir}: {e}")))?;
         let path = std::path::Path::new(dir).join(&filename);
         let path_str = path.display().to_string();
         tokio::fs::write(&path, &bytes)
             .await
-            .map_err(|e| Error::Io(format!("写入 {path_str} 失败: {e}")))?;
+            .map_err(|e| Error::Io(format!("failed to write {path_str}: {e}")))?;
         Ok(path_str)
     }
 

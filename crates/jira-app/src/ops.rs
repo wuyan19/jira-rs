@@ -104,7 +104,7 @@ pub async fn update_issue(
 ) -> Result<Value, Error> {
     let f = build_update_fields(summary, description_md, fields);
     if f.as_object().is_none_or(|o| o.is_empty()) {
-        return Err(Error::Parse("没有可更新字段：请提供 summary / description-md / fields".into()));
+        return Err(Error::Parse("nothing to update: provide summary / description-md / fields".into()));
     }
     if dry_run {
         return Ok(json!({ "dryRun": true, "method": "PUT", "path": format!("/rest/api/2/issue/{key}"), "body": { "fields": f } }));

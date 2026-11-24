@@ -56,7 +56,7 @@ jira upgrade --check    # 只查看是否有新版本
 jira upgrade --force    # 已是最新也重装，用于修复损坏的安装
 ```
 
-下载内容按 SHA-256 校验，不通过则不替换。正在运行的 `jira mcp` 进程仍是旧版本，重启 MCP 客户端后生效。
+下载内容按 SHA-256 校验，不通过则不替换。
 
 国内网络同样支持两种方式：环境变量 `JIRA_DOWNLOAD_BASE` 为加速站前缀（形如 `https://xxx.example/https://github.com`）；`HTTPS_PROXY` 指定代理，`JIRA_UPGRADE_PROXY` 可单独为升级指定代理。
 

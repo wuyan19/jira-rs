@@ -86,7 +86,7 @@ impl JiraConfig {
         }
         dirs::config_dir()
             .map(|d| d.join("jira").join("config.toml"))
-            .ok_or_else(|| "无法确定系统配置目录，请设置 JIRA_CONFIG_FILE".to_string())
+            .ok_or_else(|| "cannot determine the system config directory; set JIRA_CONFIG_FILE".to_string())
     }
 
     /// Read the config file; `Ok(None)` when it does not exist.
@@ -96,9 +96,9 @@ impl JiraConfig {
             return Ok(None);
         }
         let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
         let stored: StoredConfig = toml::from_str(&text)
-            .map_err(|e| format!("解析 {} 失败: {e}", path.display()))?;
+            .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
         Ok(Some(stored))
     }
 
@@ -106,12 +106,12 @@ impl JiraConfig {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建目录 {} 失败: {e}", parent.display()))?;
+                .map_err(|e| format!("failed to create directory {}: {e}", parent.display()))?;
         }
         let text = toml::to_string_pretty(stored)
-            .map_err(|e| format!("序列化配置失败: {e}"))?;
+            .map_err(|e| format!("failed to serialize the config: {e}"))?;
         std::fs::write(&path, text)
-            .map_err(|e| format!("写入 {} 失败: {e}", path.display()))?;
+            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
         Ok(path)
     }
 
@@ -122,17 +122,17 @@ impl JiraConfig {
             return Ok(false);
         }
         std::fs::remove_file(&path)
-            .map_err(|e| format!("删除 {} 失败: {e}", path.display()))?;
+            .map_err(|e| format!("failed to delete {}: {e}", path.display()))?;
         Ok(true)
     }
 
     pub fn from_stored(stored: &StoredConfig) -> Result<Self, String> {
         let url = stored.url.trim_end_matches('/').to_string();
         if url.is_empty() {
-            return Err("url 为空".to_string());
+            return Err("url is empty".to_string());
         }
         if stored.token.is_empty() {
-            return Err("token 为空".to_string());
+            return Err("token is empty".to_string());
         }
         let auth = if stored.auth_type.eq_ignore_ascii_case("bearer") {
             Auth::Bearer { token: stored.token.clone() }
@@ -142,7 +142,7 @@ impl JiraConfig {
                 .as_deref()
                 .map(str::trim)
                 .filter(|u| !u.is_empty())
-                .ok_or("basic 认证需要 user")?;
+                .ok_or("basic auth requires a user")?;
             Auth::Basic { user: user.to_string(), token: stored.token.clone() }
         };
         Ok(Self {
@@ -197,7 +197,7 @@ impl JiraConfig {
             Ok(cfg) => Ok(cfg),
             Err(env_err) => match Self::load_file() {
                 Ok(Some(stored)) => Self::from_stored(&stored),
-                Ok(None) => Err(format!("{env_err}；也未找到配置文件（先运行 `jira auth login`）")),
+                Ok(None) => Err(format!("{env_err}; no config file was found either (run `jira auth login` first)")),
                 Err(file_err) => Err(file_err),
             },
         }
